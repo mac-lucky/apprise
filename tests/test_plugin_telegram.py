@@ -1732,11 +1732,11 @@ def test_plugin_telegram_html_to_markdown_hardening(mock_post):
     # Empty adjacent entities collapse without affecting following text.
     assert NotifyTelegram._commonmark_to_telegram("****x") == "x"
 
-    # _build_backtick_run_index() / _find_unescaped_run() -- the lookup
+    # build_backtick_run_index() / find_unescaped_run() -- the lookup
     # returns None outright when the requested run never appears at all.
     assert (
-        NotifyTelegram._find_unescaped_run(
-            NotifyTelegram._build_backtick_run_index("no match here"), 0, 2
+        NotifyTelegram.find_unescaped_run(
+            NotifyTelegram.build_backtick_run_index("no match here"), 0, 2
         )
         is None
     )
@@ -1744,8 +1744,8 @@ def test_plugin_telegram_html_to_markdown_hardening(mock_post):
     # A genuine match arbitrarily far from `start` is still found.
     far = "a" * 200_000 + "`"
     assert (
-        NotifyTelegram._find_unescaped_run(
-            NotifyTelegram._build_backtick_run_index(far), 0, 1
+        NotifyTelegram.find_unescaped_run(
+            NotifyTelegram.build_backtick_run_index(far), 0, 1
         )
         == 200_000
     )

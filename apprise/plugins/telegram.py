@@ -51,7 +51,6 @@
 #
 # Development API Reference::
 #  - https://core.telegram.org/bots/api
-from bisect import bisect_left
 from json import dumps, loads
 import os
 import re
@@ -65,6 +64,7 @@ from ..common import (
     NotifyType,
     PersistentStoreMode,
 )
+from ..conversion import build_backtick_run_index, find_unescaped_run
 from ..locale import gettext_lazy as _
 from ..utils.parse import parse_bool, parse_list, validate_regex
 from .base import NotifyBase
@@ -788,43 +788,9 @@ class NotifyTelegram(NotifyBase):
         )
         return 0
 
-    @classmethod
-    def _build_backtick_run_index(cls, text):
-        """Index unescaped backtick runs by width in one pass."""
-
-        index = {}
-        i = 0
-        n = len(text)
-
-        while i < n:
-            ch = text[i]
-
-            if ch == "\\" and i + 1 < n:
-                i += 2
-                continue
-
-            if ch == "`":
-                j = i
-                while j < n and text[j] == "`":
-                    j += 1
-                index.setdefault(j - i, []).append(i)
-                i = j
-                continue
-
-            i += 1
-
-        return index
-
-    @staticmethod
-    def _find_unescaped_run(index, start, run):
-        """Find the next indexed backtick run of the requested width."""
-
-        positions = index.get(run)
-        if not positions:
-            return None
-
-        pos = bisect_left(positions, start)
-        return positions[pos] if pos < len(positions) else None
+    # Expose shared delimiter helpers for classmethods and tests.
+    build_backtick_run_index = staticmethod(build_backtick_run_index)
+    find_unescaped_run = staticmethod(find_unescaped_run)
 
     # Convert HTML-derived CommonMark to Telegram Markdown in one pass while
     # preserving nested entities and independently valid message chunks.
@@ -867,7 +833,7 @@ class NotifyTelegram(NotifyBase):
         stack = []
         i = 0
         n = len(body)
-        backtick_runs = cls._build_backtick_run_index(body)
+        backtick_runs = cls.build_backtick_run_index(body)
 
         while i < n:
             ch = body[i]
@@ -888,7 +854,7 @@ class NotifyTelegram(NotifyBase):
                 while j < n and body[j] == "`":
                     j += 1
                 run = j - i
-                close = cls._find_unescaped_run(backtick_runs, j, run)
+                close = cls.find_unescaped_run(backtick_runs, j, run)
 
                 if close is not None:
                     content = body[j:close]
@@ -905,8 +871,20 @@ class NotifyTelegram(NotifyBase):
 
             # Convert angle-bracket destinations to Telegram's bare form.
             if body.startswith("](<", i):
-                close = body.find(">)", i + 3)
-                if close != -1:
+                # Scan with escape awareness so ">)" inside a URL does not
+                # falsely terminate the destination.
+                close = None
+                k = i + 3
+                while k < n - 1:
+                    if body[k] == "\\" and k + 1 < n:
+                        k += 2
+                        continue
+                    if body[k] == ">" and body[k + 1] == ")":
+                        close = k
+                        break
+                    k += 1
+
+                if close is not None:
                     url = body[i + 3 : close]
                     url = url.replace("\\", "\\\\").replace(")", "\\)")
                     out.append("](" + url + ")")
@@ -1019,11 +997,11 @@ class NotifyTelegram(NotifyBase):
         link_stack = []
         i = 0
         n = len(text)
-        backtick_runs = cls._build_backtick_run_index(text)
+        backtick_runs = cls.build_backtick_run_index(text)
 
         in_code_width = pending.pop("in_code", None)
         if in_code_width and strict:
-            close = cls._find_unescaped_run(backtick_runs, 0, in_code_width)
+            close = cls.find_unescaped_run(backtick_runs, 0, in_code_width)
             if close is not None:
                 out.append(cls._strict_escape(text[:close]))
                 i = close + in_code_width
@@ -1068,7 +1046,7 @@ class NotifyTelegram(NotifyBase):
                 while j < n and text[j] == "`":
                     j += 1
                 run = j - i
-                close = cls._find_unescaped_run(backtick_runs, j, run)
+                close = cls.find_unescaped_run(backtick_runs, j, run)
                 if close is not None:
                     out.append(text[i : close + run])
                     i = close + run
@@ -1187,6 +1165,16 @@ class NotifyTelegram(NotifyBase):
 
         strict = self.markdown_ver == TelegramMarkdownVersion.TWO
 
+        # Merge the title into the CommonMark body before dialect conversion
+        # so the heading syntax is translated to Telegram markup correctly.
+        if self.title_maxlen <= 0 and title:
+            title_text = title.lstrip("\r\n \t\v\f#-")
+            if title_text:
+                body = (
+                    f"# {title_text}\r\n{body}" if body else f"# {title_text}"
+                )
+            title = ""
+
         if body:
             body = self._commonmark_to_telegram(body, strict=strict)
         if title:
@@ -1249,11 +1237,17 @@ class NotifyTelegram(NotifyBase):
                 body_format == NotifyFormat.TEXT
                 and self.markdown_ver == TelegramMarkdownVersion.TWO
             ):
-                # Escape reserved characters in plain MarkdownV2 input.
+                # Escape MarkdownV2-only reserved characters in plain text.
+                # See: https://stackoverflow.com/a/69892704/355584
+                # Also: https://core.telegram.org/bots/api#markdownv2-style
+                # HTML bodies were already escaped during dialect adaptation.
                 body = re.sub(r"(?<!\\)([_*[\]()~`>#+=|{}.!-])", r"\\\1", body)
 
-            # HTML was adapted before splitting; direct Telegram Markdown is
-            # left unchanged.
+            # HTML was converted to Telegram Markdown before splitting so no
+            # further transformation is required here; direct Telegram Markdown
+            # input is left unchanged regardless of version.
+            payload_["parse_mode"] = self.markdown_ver
+            payload_["text"] = body
 
             payload_["parse_mode"] = self.markdown_ver
             payload_["text"] = body

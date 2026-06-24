@@ -308,14 +308,14 @@ def test_plugin_google_chat_html_to_markdown_hardening(mock_post):
 
     # Indexed lookup skips escapes and requires an exact run width.
     assert (
-        NotifyGoogleChat._find_unescaped_run(
-            NotifyGoogleChat._build_backtick_run_index("\\` `"), 0, 1
+        NotifyGoogleChat.find_unescaped_run(
+            NotifyGoogleChat.build_backtick_run_index("\\` `"), 0, 1
         )
         == 3
     )
     assert (
-        NotifyGoogleChat._find_unescaped_run(
-            NotifyGoogleChat._build_backtick_run_index("no backticks"), 0, 1
+        NotifyGoogleChat.find_unescaped_run(
+            NotifyGoogleChat.build_backtick_run_index("no backticks"), 0, 1
         )
         is None
     )
@@ -323,8 +323,8 @@ def test_plugin_google_chat_html_to_markdown_hardening(mock_post):
     # A run that's longer than requested doesn't match either -- it's
     # indexed under its own (different) length group.
     assert (
-        NotifyGoogleChat._find_unescaped_run(
-            NotifyGoogleChat._build_backtick_run_index("`` `"), 0, 1
+        NotifyGoogleChat.find_unescaped_run(
+            NotifyGoogleChat.build_backtick_run_index("`` `"), 0, 1
         )
         == 3
     )
@@ -332,8 +332,8 @@ def test_plugin_google_chat_html_to_markdown_hardening(mock_post):
     # Indexed lookup has no distance cutoff.
     far = "a" * 200_000 + "`"
     assert (
-        NotifyGoogleChat._find_unescaped_run(
-            NotifyGoogleChat._build_backtick_run_index(far), 0, 1
+        NotifyGoogleChat.find_unescaped_run(
+            NotifyGoogleChat.build_backtick_run_index(far), 0, 1
         )
         == 200_000
     )
